@@ -1,0 +1,38 @@
+
+body {
+    margin: 0;
+    padding: 30px 15px;
+    background: #121528;
+    font-family: Arial, sans-serif;
+    text-align: center;
+    color: white;
+}
+
+.header h1 {
+    font-size: 22px;
+    letter-spacing: 5px;
+    margin-bottom: 5px;
+    color: #ff79a8;
+}
+
+.header p {
+    color: #a5b4fc;
+    font-size: 12px;
+    letter-spacing: 3px;
+}
+
+canvas {
+    display: block;
+    margin: 20px auto;
+    border-radius: 18px;
+    max-width: 100%;
+    height: auto !important;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+}
+
+.instruction {
+    color: #a5b4fc;
+    font-size: 13px;
+    letter-spacing: 2px;
+    line-height: 1.8;
+}
