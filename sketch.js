@@ -54,10 +54,19 @@ let stretchDistance = 0.5
 let stretchStart = null
 
 // SHAKE - ORIGINAL VERSION
-let shakeWindow = 1300
-let shakeMinDistance = 0.38
-let shakeRequiredReversals = 6
-let shakeNoiseThreshold = 0.035
+
+let shakeWindow = 1800
+let shakeMinDistance = 0.22
+let shakeRequiredReversals = 3
+let shakeNoiseThreshold = 0.025
+
+// Allow brief hand tracking loss
+let shakeTrackingGrace = 450
+let lastHandSeenTime = 0
+
+// Extra protection against accidental movement
+let shakeTotalDistance = 0
+let shakeMinimumTotalDistance = 0.85
 
 let shakePositions = []
 let shakeMotion = 0
@@ -1659,6 +1668,7 @@ function getHandPoint(hand, name, index) {
 // RESET SHAKE TRACKING
 // ==========================
 
+
 function resetShakeTracking() {
 
     shakePositions = []
@@ -1670,7 +1680,10 @@ function resetShakeTracking() {
     shakeReversals = 0
     shakeStartTime = 0
 
+    shakeTotalDistance = 0
+    lastHandSeenTime = 0
 }
+
 
 // ==========================
 // RESET ALL GESTURES
@@ -1695,21 +1708,30 @@ function resetGestureTracking() {
 
 function detectGestures() {
 
+    
+if (!cameraReady || hands.length === 0) {
+
+    pinchStartTime = null
+    stretchStart = null
+
     if (
-        !cameraReady ||
-        hands.length === 0
+        lastHandSeenTime > 0 &&
+        millis() - lastHandSeenTime < shakeTrackingGrace
     ) {
 
+        gestureStatus = "KEEP SHAKING!"
+
+    } else {
+
         gestureStatus = "SHOW YOUR HANDS"
-
-        pinchStartTime = null
-        stretchStart = null
-
         resetShakeTracking()
-
-        return
-
     }
+
+    return
+}
+
+// Remember the last time a hand was visible
+lastHandSeenTime = millis()
 
     if (
         millis() - lastGestureTime <
@@ -1955,6 +1977,7 @@ function detectGestures() {
 // ORIGINAL SHAKE DETECTION
 // ==========================
 
+
 function detectShake(x, handCount, handSize) {
 
     let now = millis()
@@ -1963,31 +1986,28 @@ function detectShake(x, handCount, handSize) {
         previousHandCount !== 0 &&
         previousHandCount !== handCount
     ) {
-
         resetShakeTracking()
-
     }
 
     previousHandCount = handCount
 
-    let normalizedX =
-        x / max(handSize, 1)
+    // Normalize movement by hand size
+    let normalizedX = x / max(handSize, 1)
 
     shakePositions.push({
         x: normalizedX,
         time: now
     })
 
-    shakePositions = shakePositions.filter(
-        function(point) {
-            return now - point.time <= shakeWindow
-        }
-    )
+    shakePositions = shakePositions.filter(function(point) {
+        return now - point.time <= shakeWindow
+    })
 
-    if (shakePositions.length < 3) {
+    if (shakePositions.length < 2) {
         return
     }
 
+    // Reset if the movement takes too long
     if (
         shakeStartTime > 0 &&
         now - shakeStartTime > shakeWindow
@@ -2003,7 +2023,6 @@ function detectShake(x, handCount, handSize) {
         })
 
         return
-
     }
 
     let latest =
@@ -2012,56 +2031,78 @@ function detectShake(x, handCount, handSize) {
     let previous =
         shakePositions[shakePositions.length - 2]
 
-    let movement =
-        latest.x - previous.x
+    let movement = latest.x - previous.x
 
     shakeMotion = abs(movement)
 
-    let direction = 0
-
-    if (movement > shakeNoiseThreshold) {
-        direction = 1
-    }
-
-    if (movement < -shakeNoiseThreshold) {
-        direction = -1
-    }
-
-    if (direction === 0) {
+    // Ignore tiny tracking jitter
+    if (abs(movement) < shakeNoiseThreshold) {
         return
     }
 
+    let direction = movement > 0 ? 1 : -1
+
+    // Start tracking the first movement
     if (shakeDirection === 0) {
 
         shakeDirection = direction
-        shakeExtreme = latest.x
+        shakeExtreme = previous.x
         shakeStartTime = now
 
         return
-
     }
 
+    // Continue in the same direction
     if (direction === shakeDirection) {
 
         if (direction === 1) {
-
-            shakeExtreme = max(
-                shakeExtreme,
-                latest.x
-            )
-
+            shakeExtreme = max(shakeExtreme, latest.x)
         } else {
-
-            shakeExtreme = min(
-                shakeExtreme,
-                latest.x
-            )
-
+            shakeExtreme = min(shakeExtreme, latest.x)
         }
 
         return
-
     }
+
+    // Direction changed
+    let reverseDistance =
+        abs(latest.x - shakeExtreme)
+
+    if (reverseDistance >= shakeMinDistance) {
+
+        shakeReversals++
+
+        shakeTotalDistance += reverseDistance
+
+        shakeDirection = direction
+        shakeExtreme = latest.x
+
+        gestureStatus =
+            "SHAKING " +
+            shakeReversals +
+            " / " +
+            shakeRequiredReversals
+    }
+
+    // Only trigger after repeated movement
+    if (
+        shakeReversals >= shakeRequiredReversals &&
+        shakeTotalDistance >= shakeMinimumTotalDistance
+    ) {
+
+        if (removeAd(2)) {
+
+            gestureStatus = "FOREST BREEZE!"
+
+            lastGestureTime = now
+
+            resetShakeTracking()
+
+            return
+        }
+    }
+}
+
 
     let reverseDistance =
         abs(latest.x - shakeExtreme)
@@ -2094,7 +2135,6 @@ function detectShake(x, handCount, handSize) {
 
     }
 
-}
 
 // ==========================
 // CAMERA PREVIEW
