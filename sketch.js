@@ -1,7 +1,30 @@
 
+/*
+FOX & BUNNY FOREST CLUB
+p5.js + ml5.js HandPose
+
+1 = SQUEEZE / POP-UP
+2 = STRETCH / BANNER
+3 = SHAKE / VIDEO
+R = RESTART
+
+NEW:
+MUSHROOM POOF ANIMATION
+*/
+
+// ==========================
+// GLOBAL VARIABLES
+// ==========================
+
 let video
 let handPose
 let hands = []
+
+let cameraSelect
+let currentStream = null
+let cameraReady = false
+let cameraVersion = 0
+let cameraStatus = "STARTING CAMERA..."
 
 let ads = []
 let adsDestroyed = 0
@@ -12,25 +35,61 @@ let maxAds = 15
 
 let gestureStatus = "LOADING HANDPOSE..."
 let lastGestureTime = -1000
-
-// Gesture sensitivity
 let gestureCooldown = 1000
 
-let pinchClose = 0.8
-let pinchOpen = 0.85  
+// ==========================
+// GESTURE SETTINGS
+// ==========================
 
-let stretchDistance = 0.5
-let shakeStep = 2
+// SQUEEZE
+let pinchClose = 0.6
+let pinchOpen = 0.8
+let pinchHoldTime = 200
 
-// Gesture tracking
 let pinchReady = true
+let pinchStartTime = null
 
+// STRETCH
+let stretchDistance = 0.5
 let stretchStart = null
 
-let previousHandX = null
-let lastDirection = 0
-let shakeCount = 0
-let lastShakeTime = 0
+// SHAKE - ORIGINAL VERSION
+let shakeWindow = 1300
+let shakeMinDistance = 0.38
+let shakeRequiredReversals = 6
+let shakeNoiseThreshold = 0.035
+
+let shakePositions = []
+let shakeMotion = 0
+let previousHandCount = 0
+let shakeDirection = 0
+let shakeExtreme = null
+let shakeReversals = 0
+let shakeStartTime = 0
+
+// DEBUG
+let debugPinch = 0
+let debugStretch = 0
+
+// ==========================
+// FOREST COLORS
+// ==========================
+
+let C = {
+    cream: "#FAF4E8",
+    paper: "#FFFCF6",
+    brown: "#5B483C",
+    muted: "#8D7B6B",
+    sage: "#A7B99A",
+    green: "#698266",
+    paleGreen: "#E3EBD9",
+    orange: "#D98B53",
+    fox: "#D88A4D",
+    pink: "#E9B7B7",
+    red: "#D86B65",
+    gold: "#E5C07B",
+    blue: "#B8C7C4"
+}
 
 let messages = [
     "20% OFF",
@@ -41,10 +100,24 @@ let messages = [
     "FREE GIFT"
 ]
 
+// ==========================
+// NEW MUSHROOM PARTICLES
+// ==========================
 
-// -------------------------
-// SETUP
-// -------------------------
+let mushroomParticles = []
+
+let poofColors = [
+    "#E9B7B7",
+    "#FAF4E8",
+    "#D86B65",
+    "#A7B99A",
+    "#E5C07B",
+    "#FFFCF6"
+]
+
+// ==========================
+// PRELOAD
+// ==========================
 
 function preload() {
 
@@ -55,18 +128,45 @@ function preload() {
 
 }
 
+// ==========================
+// SETUP
+// ==========================
+
 function setup() {
 
-    let canvas = createCanvas(900, 700)
+    let canvas = createCanvas(900, 740)
+
     canvas.parent("canvas-container")
 
-    video = createCapture(VIDEO)
-    video.size(320, 240)
-    video.hide()
+    textFont("Trebuchet MS")
 
-    textFont("Arial")
+    cameraSelect =
+        document.getElementById("camera-select")
 
-    handPose.detectStart(video, gotHands)
+    if (cameraSelect) {
+
+        cameraSelect.addEventListener(
+            "change",
+            function() {
+                startCamera(cameraSelect.value)
+            }
+        )
+
+    }
+
+    let refreshButton =
+        document.getElementById("refresh-camera")
+
+    if (refreshButton) {
+
+        refreshButton.addEventListener(
+            "click",
+            function() {
+                refreshCameras()
+            }
+        )
+
+    }
 
     addAd(0)
     addAd(1)
@@ -74,16 +174,267 @@ function setup() {
 
     nextAdTime = millis() + adInterval
 
+    initializeCamera()
+
 }
 
+// ==========================
+// CAMERA INITIALIZATION
+// ==========================
 
-// -------------------------
-// DRAW
-// -------------------------
+async function initializeCamera() {
+
+    try {
+
+        let permissionStream =
+            await navigator.mediaDevices.getUserMedia({
+                video: true,
+                audio: false
+            })
+
+        let devices =
+            await navigator.mediaDevices.enumerateDevices()
+
+        let cameras = devices.filter(function(device) {
+            return device.kind === "videoinput"
+        })
+
+        let emeet = cameras.find(function(camera) {
+            return camera.label.toLowerCase().includes("emeet")
+        })
+
+        let chosenCamera = emeet || cameras[0]
+
+        permissionStream.getTracks().forEach(function(track) {
+            track.stop()
+        })
+
+        await startCamera(
+            chosenCamera ? chosenCamera.deviceId : ""
+        )
+
+        await refreshCameras(false)
+
+    } catch (error) {
+
+        console.error(error)
+        cameraStatus = "CAMERA ERROR"
+
+    }
+
+}
+
+// ==========================
+// REFRESH CAMERAS
+// ==========================
+
+async function refreshCameras(autoSelect = true) {
+
+    try {
+
+        let devices =
+            await navigator.mediaDevices.enumerateDevices()
+
+        let cameras = devices.filter(function(device) {
+            return device.kind === "videoinput"
+        })
+
+        if (cameraSelect) {
+
+            cameraSelect.innerHTML = ""
+
+            for (let i = 0; i < cameras.length; i++) {
+
+                let option = document.createElement("option")
+
+                option.value = cameras[i].deviceId
+
+                option.textContent =
+                    cameras[i].label || "Camera " + (i + 1)
+
+                cameraSelect.appendChild(option)
+
+            }
+
+        }
+
+        let activeId = currentStream
+            ? currentStream.getVideoTracks()[0].getSettings().deviceId
+            : ""
+
+        if (cameraSelect && activeId) {
+            cameraSelect.value = activeId
+        }
+
+        let emeet = cameras.find(function(camera) {
+            return camera.label.toLowerCase().includes("emeet")
+        })
+
+        if (
+            autoSelect &&
+            emeet &&
+            emeet.deviceId !== activeId
+        ) {
+
+            await startCamera(emeet.deviceId)
+
+        }
+
+    } catch (error) {
+
+        console.error(error)
+        cameraStatus = "CAMERA LIST ERROR"
+
+    }
+
+}
+
+// ==========================
+// START CAMERA
+// ==========================
+
+async function startCamera(deviceId) {
+
+    let version = ++cameraVersion
+
+    cameraReady = false
+    cameraStatus = "CONNECTING CAMERA..."
+
+    try {
+
+        let constraints = {
+
+            audio: false,
+
+            video: {
+                width: { ideal: 640 },
+                height: { ideal: 480 },
+                frameRate: { ideal: 30 }
+            }
+
+        }
+
+        if (deviceId) {
+
+            constraints.video.deviceId = {
+                exact: deviceId
+            }
+
+        }
+
+        let stream =
+            await navigator.mediaDevices.getUserMedia(
+                constraints
+            )
+
+        if (version !== cameraVersion) {
+
+            stream.getTracks().forEach(function(track) {
+                track.stop()
+            })
+
+            return
+
+        }
+
+        if (!video) {
+
+            video = createVideo([])
+            video.hide()
+
+            video.elt.autoplay = true
+            video.elt.muted = true
+            video.elt.playsInline = true
+
+            video.elt.srcObject = stream
+
+            await video.elt.play()
+
+            currentStream = stream
+
+            video.size(
+                video.elt.videoWidth,
+                video.elt.videoHeight
+            )
+
+            handPose.detectStart(video, gotHands)
+
+        } else {
+
+            let oldStream = currentStream
+
+            video.elt.srcObject = stream
+
+            await video.elt.play()
+
+            currentStream = stream
+
+            video.size(
+                video.elt.videoWidth,
+                video.elt.videoHeight
+            )
+
+            if (oldStream && oldStream !== stream) {
+
+                oldStream.getTracks().forEach(function(track) {
+                    track.stop()
+                })
+
+            }
+
+        }
+
+        hands = []
+
+        resetGestureTracking()
+
+        cameraReady = true
+
+        cameraStatus =
+            stream.getVideoTracks()[0].label +
+            " CONNECTED"
+
+        gestureStatus = "SHOW YOUR HANDS"
+
+        let activeId =
+            stream.getVideoTracks()[0].getSettings().deviceId
+
+        if (cameraSelect && activeId) {
+            cameraSelect.value = activeId
+        }
+
+    } catch (error) {
+
+        console.error(error)
+        cameraStatus = "CAMERA CONNECTION FAILED"
+
+    }
+
+}
+
+// ==========================
+// HANDPOSE RESULTS
+// ==========================
+
+function gotHands(results) {
+
+    if (cameraReady) {
+        hands = results
+    }
+
+}
+
+// ==========================
+// MAIN DRAW
+// ==========================
 
 function draw() {
 
-    background(18, 21, 40)
+    background(C.cream)
+
+    drawBackgroundDecorations()
+    drawHeader()
+    drawWebsite()
 
     if (millis() > nextAdTime) {
 
@@ -92,24 +443,36 @@ function draw() {
 
     }
 
-    drawHeader()
-    drawWebsite()
+    // DRAW ALL ADS
 
-    // Update and draw ads
     for (let i = ads.length - 1; i >= 0; i--) {
 
         let ad = ads[i]
 
-        if (ad.appearing < 1) {
-
-            ad.appearing += 0.08
-            ad.appearing = min(ad.appearing, 1)
-
-        }
+        ad.appearing = min(
+            1,
+            ad.appearing + 0.08
+        )
 
         if (ad.removing) {
 
-            ad.progress += 0.06
+            ad.progress += 0.045
+
+            // NEW:
+            // Spawn mushroom spores once,
+            // when the pop-up is squeezed.
+
+            if (
+                ad.type === 0 &&
+                ad.progress >= 0.35 &&
+                !ad.poofCreated
+            ) {
+
+                createMushroomPoof(ad)
+
+                ad.poofCreated = true
+
+            }
 
             if (ad.progress >= 1) {
 
@@ -126,405 +489,554 @@ function draw() {
 
     }
 
+    // Draw particles on top of ads
+    updateMushroomParticles()
+
     detectGestures()
+
     drawCamera()
     drawGestureStatus()
 
 }
 
+// ==========================
+// BACKGROUND DECORATIONS
+// ==========================
 
-// -------------------------
-// HANDPOSE RESULTS
-// -------------------------
+function drawBackgroundDecorations() {
 
-function gotHands(results) {
+    noStroke()
 
-    hands = results
+    fill("#F0E4D4")
+
+    ellipse(40, 80, 180, 140)
+    ellipse(850, 650, 180, 160)
+
+    for (let i = 0; i < 10; i++) {
+
+        let x = 30 + i * 94
+        let y = 86 + (i % 3) * 8
+
+        drawTinyFlower(
+            x,
+            y,
+            0.65,
+            i % 2 === 0 ? C.pink : C.gold
+        )
+
+    }
+
+    drawLeaf(21, 405, 0.8, -0.4)
+    drawLeaf(877, 200, 0.85, 0.5)
 
 }
 
+// ==========================
+// TINY FLOWER
+// ==========================
 
-// -------------------------
-// GESTURE DETECTION
-// -------------------------
+function drawTinyFlower(
+    x,
+    y,
+    s = 1,
+    color = C.pink
+) {
 
-function detectGestures() {
+    push()
 
-    if (hands.length === 0) {
+    translate(x, y)
+    scale(s)
 
-        gestureStatus = "SHOW YOUR HANDS"
+    noStroke()
+    fill(color)
 
-        pinchReady = true
-        stretchStart = null
+    for (let a = 0; a < 5; a++) {
 
-        previousHandX = null
-        lastDirection = 0
-        shakeCount = 0
+        push()
 
-        return
+        rotate(a * TWO_PI / 5)
 
-    }
+        ellipse(0, -7, 8, 12)
 
-    // Cooldown after each successful gesture
-    if (millis() - lastGestureTime < gestureCooldown) {
-
-        gestureStatus = "COOLDOWN..."
-
-        stretchStart = null
-
-        previousHandX = null
-        lastDirection = 0
-        shakeCount = 0
-
-        return
+        pop()
 
     }
 
+    fill(C.gold)
+    circle(0, 0, 7)
 
-    // -------------------------
-    // TWO HANDS: STRETCH
-    // -------------------------
-
-    if (hands.length >= 2) {
-
-        let hand1 = hands[0]
-        let hand2 = hands[1]
-
-        let wrist1 = hand1.wrist
-        let wrist2 = hand2.wrist
-
-        let palm1 = hand1.middle_finger_mcp
-        let palm2 = hand2.middle_finger_mcp
-
-        let handSize1 = dist(
-            wrist1.x, wrist1.y,
-            palm1.x, palm1.y
-        )
-
-        let handSize2 = dist(
-            wrist2.x, wrist2.y,
-            palm2.x, palm2.y
-        )
-
-        let averageHandSize = (handSize1 + handSize2) / 2
-
-        let distanceBetweenHands = abs(palm1.x - palm2.x)
-
-        let normalizedDistance = distanceBetweenHands / max(averageHandSize, 1)
-
-        gestureStatus = "TWO HANDS - STRETCH"
-
-        // Begin tracking current stretch
-        if (stretchStart === null) {
-
-            stretchStart = normalizedDistance
-
-        }
-
-        // Update the closest distance
-        if (normalizedDistance < stretchStart) {
-
-            stretchStart = normalizedDistance
-
-        }
-
-        // Detect stretch
-        if (normalizedDistance - stretchStart > stretchDistance) {
-
-            removeAd(1)
-
-            gestureStatus = "STRETCH DETECTED!"
-
-            lastGestureTime = millis()
-
-            // Start a new stretch after cooldown
-            stretchStart = null
-
-        }
-
-        // Clear one-hand tracking
-        previousHandX = null
-        pinchReady = true
-
-        shakeCount = 0
-        lastDirection = 0
-
-        return
-
-    }
-
-
-    // -------------------------
-    // ONE HAND: SQUEEZE / SHAKE
-    // -------------------------
-
-    stretchStart = null
-
-    let hand = hands[0]
-
-    let thumb = hand.thumb_tip
-    let index = hand.index_finger_tip
-
-    let wrist = hand.wrist
-    let palm = hand.middle_finger_mcp
-
-    let handSize = dist(
-        wrist.x, wrist.y,
-        palm.x, palm.y
-    )
-
-    if (handSize < 10) {
-        return
-    }
-
-    let pinchDistance = dist(
-        thumb.x, thumb.y,
-        index.x, index.y
-    ) / handSize
-
-    let handX = palm.x
-
-
-    // -------------------------
-    // SQUEEZE
-    // -------------------------
-
-    // Fingers open again
-    if (pinchDistance > pinchOpen) {
-
-        pinchReady = true
-
-    }
-
-    // Fingers close
-    if (pinchReady && pinchDistance < pinchClose) {
-
-        removeAd(0)
-
-        gestureStatus = "SQUEEZE DETECTED!"
-
-        lastGestureTime = millis()
-
-        pinchReady = false
-
-        previousHandX = null
-        shakeCount = 0
-        lastDirection = 0
-
-        return
-
-    }
-
-
-    // -------------------------
-    // SHAKE
-    // -------------------------
-
-    if (previousHandX !== null) {
-
-        let movement = handX - previousHandX
-
-        let direction = 0
-
-        if (movement > shakeStep) {
-            direction = 1
-        }
-
-        if (movement < -shakeStep) {
-            direction = -1
-        }
-
-        if (direction !== 0) {
-
-            if (
-                lastDirection !== 0 &&
-                direction !== lastDirection
-            ) {
-
-                if (millis() - lastShakeTime > 1100) {
-
-                    shakeCount = 0
-
-                }
-
-                shakeCount++
-                lastShakeTime = millis()
-
-            }
-
-            lastDirection = direction
-
-        }
-
-    }
-
-    // Two direction changes = shake
-    if (shakeCount >= 2) {
-
-        removeAd(2)
-
-        gestureStatus = "SHAKE DETECTED!"
-
-        lastGestureTime = millis()
-
-        shakeCount = 0
-        lastDirection = 0
-        previousHandX = null
-
-        return
-
-    }
-
-    previousHandX = handX
-
-    gestureStatus = "ONE HAND - TRACKING"
+    pop()
 
 }
 
+// ==========================
+// LEAF
+// ==========================
 
-// -------------------------
-// HEADER + SCORE
-// -------------------------
+function drawLeaf(x, y, s = 1, a = 0) {
+
+    push()
+
+    translate(x, y)
+    rotate(a)
+    scale(s)
+
+    noStroke()
+    fill(C.sage)
+
+    ellipse(-7, 0, 24, 12)
+    ellipse(9, -9, 24, 12)
+
+    stroke(C.green)
+    strokeWeight(1.5)
+
+    line(-19, 8, 21, -18)
+
+    pop()
+
+}
+
+// ==========================
+// MUSHROOM CHARACTER
+// ==========================
+
+function drawMushroom(x, y, s = 1) {
+
+    push()
+
+    translate(x, y)
+    scale(s)
+
+    noStroke()
+
+    fill("#F6E8D6")
+    rect(-9, -2, 18, 27, 7)
+
+    fill(C.red)
+    arc(0, 0, 48, 39, PI, TWO_PI, CHORD)
+
+    fill(C.paper)
+
+    circle(-13, -10, 6)
+    circle(3, -16, 8)
+    circle(15, -8, 5)
+
+    fill(C.brown)
+
+    circle(-4, 11, 2.5)
+    circle(5, 11, 2.5)
+
+    pop()
+
+}
+
+// ==========================
+// BUNNY CHARACTER
+// ==========================
+
+function drawBunny(x, y, s = 1) {
+
+    push()
+
+    translate(x, y)
+    scale(s)
+
+    noStroke()
+
+    fill(C.paper)
+
+    ellipse(-15, -42, 22, 64)
+    ellipse(15, -42, 22, 64)
+
+    fill(C.pink)
+
+    ellipse(-15, -42, 10, 43)
+    ellipse(15, -42, 10, 43)
+
+    fill(C.paper)
+
+    ellipse(0, 12, 70, 70)
+    ellipse(0, -2, 65, 59)
+
+    fill(C.brown)
+
+    circle(-12, -4, 5)
+    circle(12, -4, 5)
+
+    fill(C.pink)
+
+    ellipse(-21, 8, 12, 7)
+    ellipse(21, 8, 12, 7)
+
+    triangle(-4, 5, 4, 5, 0, 10)
+
+    stroke(C.brown)
+    strokeWeight(1.5)
+    noFill()
+
+    arc(-4, 11, 8, 7, 0, PI)
+    arc(4, 11, 8, 7, 0, PI)
+
+    pop()
+
+}
+
+// ==========================
+// FOX CHARACTER
+// ==========================
+
+function drawFox(x, y, s = 1) {
+
+    push()
+
+    translate(x, y)
+    scale(s)
+
+    noStroke()
+
+    fill(C.fox)
+
+    triangle(-34, -23, -27, -68, -5, -39)
+    triangle(34, -23, 27, -68, 5, -39)
+
+    fill(C.pink)
+
+    triangle(-26, -37, -24, -56, -14, -37)
+    triangle(26, -37, 24, -56, 14, -37)
+
+    fill(C.fox)
+
+    ellipse(0, 0, 83, 74)
+
+    fill(C.paper)
+
+    ellipse(-17, 13, 37, 35)
+    ellipse(17, 13, 37, 35)
+
+    fill(C.brown)
+
+    circle(-17, -5, 5)
+    circle(17, -5, 5)
+
+    triangle(-5, 12, 5, 12, 0, 17)
+
+    fill(C.pink)
+
+    ellipse(-29, 12, 11, 7)
+    ellipse(29, 12, 11, 7)
+
+    pop()
+
+}
+
+// ==========================
+// GAME HEADER
+// ==========================
 
 function drawHeader() {
 
     noStroke()
     textAlign(LEFT)
 
-    fill(255)
-    textSize(30)
+    fill(C.brown)
     textStyle(BOLD)
-    text("AD ATTACK ✳", 30, 48)
+    textSize(27)
 
-    fill(160, 170, 200)
+    text("the little forest club", 35, 43)
+
+    fill(C.green)
+    textStyle(NORMAL)
     textSize(12)
-    textStyle(NORMAL)
-    text("THE INTERNET IS UNDER ATTACK", 30, 70)
 
-    fill(40, 45, 75)
-    rect(540, 15, 155, 65, 12)
-    rect(710, 15, 160, 65, 12)
+    text(
+        "✿ FOX & BUNNY / INTERNET RESCUE",
+        37,
+        66
+    )
 
-    fill(160, 250, 190)
-    textSize(11)
-    text("ADS DESTROYED", 555, 35)
+    fill(C.paleGreen)
+    rect(572, 17, 140, 60, 14)
 
-    fill(255)
-    textSize(28)
+    fill("#F7E2D9")
+    rect(723, 17, 143, 60, 14)
+
+    fill(C.green)
+    textSize(10)
     textStyle(BOLD)
-    text(adsDestroyed, 555, 68)
 
-    fill(255, 160, 180)
-    textSize(11)
-    textStyle(NORMAL)
-    text("ACTIVE ADS", 725, 35)
+    text("ADS CLEARED", 586, 37)
 
-    fill(255)
-    textSize(28)
-    textStyle(BOLD)
-    text(ads.length, 725, 68)
+    fill(C.brown)
+    textSize(27)
+
+    text(adsDestroyed, 586, 66)
+
+    fill("#AD6B61")
+    textSize(10)
+
+    text("FOREST INVADERS", 736, 37)
+
+    fill(C.brown)
+    textSize(27)
+
+    text(ads.length, 736, 66)
 
     textStyle(NORMAL)
 
 }
 
-
-// -------------------------
-// MAGAZINE WEBSITE
-// -------------------------
+// ==========================
+// FOREST WEBSITE
+// ==========================
 
 function drawWebsite() {
 
     push()
+
     noStroke()
 
-    fill(250, 249, 246)
-    rect(30, 100, 840, 470, 14)
+    fill("#E6DCCB")
+    rect(32, 102, 840, 470, 17)
 
-    fill(232)
-    rect(30, 100, 840, 38, 12)
+    fill(C.paper)
+    rect(29, 98, 840, 470, 17)
 
-    fill(255, 95, 90)
-    circle(53, 119, 11)
+    fill("#E8E8DA")
+    rect(29, 98, 840, 38, 17)
 
-    fill(255, 190, 65)
-    circle(72, 119, 11)
+    fill(C.red)
+    circle(52, 116, 10)
 
-    fill(80, 195, 110)
-    circle(91, 119, 11)
+    fill(C.gold)
+    circle(70, 116, 10)
 
-    fill(255)
-    rect(265, 107, 365, 24, 6)
+    fill(C.sage)
+    circle(88, 116, 10)
 
-    fill(120)
+    fill(C.paper)
+    rect(270, 105, 357, 23, 11)
+
+    fill(C.muted)
     textAlign(CENTER)
-    textSize(12)
-    text("www.the-sunday-edit.com", 447, 123)
+    textSize(11)
+
+    text(
+        "www.foxandbunnyforest.club",
+        448,
+        121
+    )
 
     textAlign(LEFT)
 
-    fill(35)
-    textSize(25)
+    fill(C.green)
+    textSize(10)
     textStyle(BOLD)
-    text("THE SUNDAY EDIT.", 60, 183)
 
-    fill(115)
-    textSize(11)
+    text(
+        "✿ WELCOME TO OUR LITTLE WORLD",
+        54,
+        161
+    )
+
+    fill(C.brown)
+    textFont("Georgia")
+    textSize(25)
+
+    text("Fox & Bunny", 54, 193)
+
+    textFont("Trebuchet MS")
+
+    fill(C.muted)
+    textSize(10)
     textStyle(NORMAL)
-    text("LIFESTYLE   CULTURE   DESIGN   ABOUT", 550, 182)
 
-    stroke(220)
-    line(60, 202, 840, 202)
+    text(
+        "HOME     FOREST STORIES     LITTLE SHOP     ABOUT US",
+        490,
+        183
+    )
+
+    stroke("#E8DCCB")
+    line(54, 207, 844, 207)
     noStroke()
 
-    fill(155, 105, 80)
-    textSize(11)
+    // HERO SECTION
+
+    fill(C.paleGreen)
+    rect(54, 222, 790, 186, 17)
+
+    fill("#D1DDC4")
+
+    ellipse(740, 402, 280, 160)
+    ellipse(615, 404, 230, 120)
+
+    fill("#B7CCAB")
+    ellipse(815, 406, 190, 100)
+
+    drawMushroom(567, 363, 0.85)
+    drawMushroom(810, 355, 0.55)
+
+    drawBunny(700, 327, 1.02)
+    drawFox(786, 337, 0.90)
+
+    drawTinyFlower(596, 389, 0.7, C.pink)
+    drawTinyFlower(832, 392, 0.6, C.gold)
+
+    fill(C.green)
+    textAlign(LEFT)
+    textSize(10)
     textStyle(BOLD)
-    text("FEATURED STORY / OCTOBER 2026", 60, 240)
 
-    fill(30)
-    textSize(36)
-    text("The art of slowing down", 60, 290)
+    text(
+        "A COZY CORNER OF THE INTERNET",
+        77,
+        253
+    )
 
-    fill(110)
-    textSize(16)
+    fill(C.brown)
+    textFont("Georgia")
+    textSize(27)
     textStyle(NORMAL)
-    text("Finding a little peace in an always-connected world.", 60, 322)
 
-    fill(226, 210, 195)
-    rect(60, 355, 230, 150, 6)
+    text("A little more forest,", 77, 296)
+    text("a little less noise.", 77, 330)
 
-    fill(200, 215, 205)
-    rect(310, 355, 230, 150, 6)
+    textFont("Trebuchet MS")
 
-    fill(215, 205, 220)
-    rect(560, 355, 230, 150, 6)
+    fill(C.muted)
+    textSize(11)
 
-    fill(175, 130, 110)
-    ellipse(175, 415, 85, 85)
+    text(
+        "Help us keep this woodland world peaceful.",
+        78,
+        355
+    )
 
-    fill(120, 155, 130)
-    ellipse(425, 415, 85, 85)
+    fill(C.orange)
+    rect(77, 369, 139, 25, 13)
 
-    fill(155, 125, 170)
-    ellipse(675, 415, 85, 85)
-
-    fill(40)
-    textSize(12)
+    fill(C.paper)
+    textAlign(CENTER)
     textStyle(BOLD)
+    textSize(10)
 
-    text("SLOW LIVING", 70, 487)
-    text("CREATIVE SPACES", 320, 487)
-    text("EVERYDAY OBJECTS", 570, 487)
+    text(
+        "EXPLORE THE FOREST",
+        146,
+        385
+    )
+
+    drawStoryCard(
+        54, 425, 248, 125,
+        "MUSHROOM MEADOW",
+        "A tiny world under the trees",
+        0
+    )
+
+    drawStoryCard(
+        325, 425, 248, 125,
+        "FOX'S CORNER",
+        "Slow mornings & warm sunshine",
+        1
+    )
+
+    drawStoryCard(
+        596, 425, 248, 125,
+        "BUNNY'S GARDEN",
+        "Little flowers, big feelings",
+        2
+    )
 
     pop()
 
 }
 
+// ==========================
+// FOREST STORY CARDS
+// ==========================
 
-// -------------------------
+function drawStoryCard(
+    x, y, w, h,
+    title, subtitle, kind
+) {
+
+    noStroke()
+
+    fill("#F5EEE2")
+    rect(x, y, w, h, 11)
+
+    if (kind === 0) {
+
+        fill("#DCE5D5")
+        rect(x + 9, y + 9, 73, 106, 8)
+
+        drawMushroom(
+            x + 46,
+            y + 68,
+            0.9
+        )
+
+    }
+
+    if (kind === 1) {
+
+        fill("#F4DEC9")
+        rect(x + 9, y + 9, 73, 106, 8)
+
+        drawFox(
+            x + 46,
+            y + 75,
+            0.62
+        )
+
+    }
+
+    if (kind === 2) {
+
+        fill("#F1E2E2")
+        rect(x + 9, y + 9, 73, 106, 8)
+
+        drawBunny(
+            x + 46,
+            y + 74,
+            0.61
+        )
+
+    }
+
+    fill(C.green)
+    textAlign(LEFT)
+    textSize(9)
+    textStyle(BOLD)
+
+    text(
+        "FOREST JOURNAL",
+        x + 94,
+        y + 34
+    )
+
+    fill(C.brown)
+    textSize(12)
+
+    text(title, x + 94, y + 58)
+
+    fill(C.muted)
+    textSize(10)
+    textStyle(NORMAL)
+
+    text(
+        subtitle,
+        x + 94,
+        y + 80,
+        w - 105,
+        40
+    )
+
+}
+
+// ==========================
 // CREATE ADS
-// -------------------------
+// ==========================
 
 function addAd(type) {
 
@@ -536,15 +1048,15 @@ function addAd(type) {
         type = floor(random(3))
     }
 
-    let adWidth = random(180, 250)
-    let adHeight = random(120, 150)
+    let adWidth = random(185, 245)
+    let adHeight = random(125, 152)
 
-    let newAd = {
+    let ad = {
 
         type: type,
 
         x: random(70, 820 - adWidth),
-        y: random(210, 535 - adHeight),
+        y: random(210, 530 - adHeight),
 
         w: adWidth,
         h: adHeight,
@@ -553,77 +1065,103 @@ function addAd(type) {
 
         removing: false,
         progress: 0,
-        appearing: 0
+        appearing: 0,
+
+        // NEW
+        poofCreated: false
 
     }
 
     if (type === 1) {
 
-        newAd.x = 65
-        newAd.y = random(205, 455)
-        newAd.w = 770
-        newAd.h = 55
+        ad.x = 63
+        ad.y = random(230, 470)
+        ad.w = 775
+        ad.h = 58
 
     }
 
-    ads.push(newAd)
+    ads.push(ad)
 
 }
 
-
-// -------------------------
-// DRAW ADS + ANIMATIONS
-// -------------------------
+// ==========================
+// DRAW ADS
+// ==========================
 
 function drawAd(ad) {
 
     push()
 
-    translate(ad.x + ad.w / 2, ad.y + ad.h / 2)
+    translate(
+        ad.x + ad.w / 2,
+        ad.y + ad.h / 2
+    )
 
-    let scaleX = 1
-    let scaleY = 1
+    let scaleX = ad.appearing
+    let scaleY = ad.appearing
+
     let rotation = 0
     let moveX = 0
     let moveY = 0
-
-    if (!ad.removing) {
-
-        scaleX = ad.appearing
-        scaleY = ad.appearing
-
-    }
 
     if (ad.removing) {
 
         let p = ad.progress
 
+        // ======================
+        // NEW SQUEEZE ANIMATION
+        // ======================
+
         if (ad.type === 0) {
 
-            // Squeeze
-            scaleX = max(0.01, 1 - p)
-            scaleY = 1 + sin(p * PI) * 0.2
+            // First compress the ad.
+            // Then it disappears as
+            // mushroom spores burst out.
+
+            if (p < 0.35) {
+
+                let squeeze =
+                    p / 0.35
+
+                scaleX = 1 - squeeze * 0.9
+
+                scaleY =
+                    1 + sin(squeeze * PI) * 0.25
+
+            } else {
+
+                scaleX = 0.01
+                scaleY = 0.01
+
+            }
 
         }
 
+        // STRETCH - ORIGINAL
+
         if (ad.type === 1) {
 
-            // Stretch
             scaleX = 1 + p * 0.5
             scaleY = max(0.01, 1 - p)
 
         }
 
+        // SHAKE - ORIGINAL
+
         if (ad.type === 2) {
 
-            // Shake
-            moveX = sin(p * 65) * 15 * (1 - p)
+            moveX =
+                sin(p * 65) *
+                15 *
+                (1 - p)
+
             moveY = -p * 180
 
             rotation = p * PI * 1.5
 
             scaleX = 1 - p * 0.5
-            scaleY = 1 - p * 0.5
+            scaleY = scaleX
 
         }
 
@@ -633,141 +1171,210 @@ function drawAd(ad) {
     rotate(rotation)
     scale(scaleX, scaleY)
 
-    translate(-ad.x - ad.w / 2, -ad.y - ad.h / 2)
+    translate(
+        -ad.w / 2,
+        -ad.h / 2
+    )
 
     noStroke()
     textAlign(LEFT)
     textStyle(NORMAL)
 
+    // ======================
+    // POP-UP AD
+    // ======================
 
-    // POP-UP
     if (ad.type === 0) {
 
-        fill(0, 0, 0, 45)
-        rect(ad.x + 6, ad.y + 7, ad.w, ad.h, 8)
+        fill(167, 141, 124, 100)
+        rect(5, 7, ad.w, ad.h, 11)
 
-        fill(255)
-        rect(ad.x, ad.y, ad.w, ad.h, 8)
+        fill("#FFF9F5")
+        rect(0, 0, ad.w, ad.h, 11)
 
-        fill(232, 202, 189)
-        rect(ad.x, ad.y, ad.w, 40, 8)
+        fill("#F9A9A1")
+        rect(0, 0, ad.w, 38, 11)
 
-        fill(120, 70, 55)
-        textAlign(CENTER)
+        fill("#7A3E40")
+        textSize(12)
         textStyle(BOLD)
-        textSize(13)
-        text("EXCLUSIVE OFFER", ad.x + ad.w / 2, ad.y + 25)
-
-        fill(80)
-        textAlign(RIGHT)
-        textSize(16)
-        text("×", ad.x + ad.w - 10, ad.y + 17)
-
-        fill(35)
         textAlign(CENTER)
-        textSize(24)
-        text(ad.message, ad.x + ad.w / 2, ad.y + 72)
 
-        fill(110)
-        textSize(10)
-        textStyle(NORMAL)
-        text("Sign up for exclusive offers", ad.x + ad.w / 2, ad.y + 89)
-
-        fill(35)
-        rect(ad.x + 18, ad.y + ad.h - 35, ad.w - 36, 25, 4)
-
-        fill(255)
-        textSize(10)
-        textStyle(BOLD)
-        text("GET MY DISCOUNT", ad.x + ad.w / 2, ad.y + ad.h - 18)
-
-    }
-
-
-    // BANNER
-    if (ad.type === 1) {
-
-        fill(25, 35, 48)
-        rect(ad.x, ad.y, ad.w, ad.h, 5)
-
-        fill(190, 150, 95)
-        rect(ad.x, ad.y, 110, ad.h, 5)
-
-        fill(235, 205, 150)
-        circle(ad.x + 55, ad.y + 28, 35)
-
-        textAlign(LEFT)
-
-        fill(180)
-        textSize(9)
-        textStyle(NORMAL)
-        text("SPONSORED", ad.x + 125, ad.y + 17)
-
-        fill(255)
-        textSize(18)
-        textStyle(BOLD)
-        text("THE WEEKEND SALE", ad.x + 125, ad.y + 39)
-
-        fill(255, 210, 135)
-        textSize(17)
-        text("UP TO 70% OFF", ad.x + 390, ad.y + 35)
-
-        fill(255)
-        rect(ad.x + ad.w - 125, ad.y + 12, 105, 30, 4)
-
-        fill(35)
-        textAlign(CENTER)
-        textSize(11)
-        text("SHOP NOW →", ad.x + ad.w - 72, ad.y + 31)
-
-    }
-
-
-    // FLOATING VIDEO
-    if (ad.type === 2) {
-
-        fill(0, 0, 0, 50)
-        rect(ad.x + 5, ad.y + 6, ad.w, ad.h, 7)
-
-        fill(255)
-        rect(ad.x, ad.y, ad.w, ad.h, 7)
-
-        fill(50, 65, 75)
-        rect(ad.x + 5, ad.y + 5, ad.w - 10, ad.h - 38, 4)
-
-        fill(130, 160, 145)
-        ellipse(ad.x + ad.w * 0.35, ad.y + 40, 45, 45)
-
-        fill(210, 175, 150)
-        ellipse(ad.x + ad.w * 0.65, ad.y + 35, 32, 32)
-
-        fill(255, 255, 255, 220)
-        circle(ad.x + ad.w / 2, ad.y + 40, 29)
-
-        fill(45)
-        triangle(
-            ad.x + ad.w / 2 - 4, ad.y + 33,
-            ad.x + ad.w / 2 - 4, ad.y + 47,
-            ad.x + ad.w / 2 + 8, ad.y + 40
+        text(
+            "EXCLUSIVE OFFER!",
+            ad.w / 2,
+            24
         )
 
-        fill(160)
-        rect(ad.x + 10, ad.y + ad.h - 42, ad.w - 20, 3)
+        textSize(17)
 
-        fill(225, 80, 80)
-        rect(ad.x + 10, ad.y + ad.h - 42, (ad.w - 20) * 0.35, 3)
+        text("×", ad.w - 15, 18)
 
-        fill(40)
+        fill("#A83E4E")
+        textSize(24)
+
+        text(
+            ad.message,
+            ad.w / 2,
+            74
+        )
+
+        fill(C.muted)
+        textStyle(NORMAL)
+        textSize(10)
+
+        text(
+            "You have been selected!",
+            ad.w / 2,
+            94
+        )
+
+        fill("#C94F66")
+
+        rect(
+            16,
+            ad.h - 36,
+            ad.w - 32,
+            27,
+            6
+        )
+
+        fill(255)
+        textStyle(BOLD)
+        textSize(10)
+
+        text(
+            "CLAIM YOUR DEAL!",
+            ad.w / 2,
+            ad.h - 18
+        )
+
+    }
+
+    // ======================
+    // BANNER AD
+    // ======================
+
+    if (ad.type === 1) {
+
+        fill("#342D40")
+        rect(0, 0, ad.w, ad.h, 7)
+
+        fill("#FFCC5B")
+        rect(0, 0, 108, ad.h, 7)
+
+        fill("#F47B4C")
+        circle(53, ad.h / 2, 39)
+
+        fill("#FFF6E5")
+        textAlign(CENTER)
+        textSize(25)
+        textStyle(BOLD)
+
+        text("%", 53, ad.h / 2 + 9)
+
+        fill("#FFC9C0")
+        textAlign(LEFT)
+        textSize(9)
+
+        text("SPONSORED", 125, 19)
+
+        fill(255)
+        textSize(20)
+
+        text("FLASH SALE!", 125, 43)
+
+        fill("#FFDC70")
+        textSize(19)
+
+        text("UP TO 70% OFF", 345, 38)
+
+        fill("#FF6B7A")
+
+        rect(
+            ad.w - 133,
+            12,
+            114,
+            33,
+            6
+        )
+
+        fill(255)
+        textAlign(CENTER)
+        textSize(11)
+
+        text(
+            "BUY NOW",
+            ad.w - 76,
+            33
+        )
+
+    }
+
+    // ======================
+    // VIDEO AD
+    // ======================
+
+    if (ad.type === 2) {
+
+        fill(142, 126, 120, 100)
+        rect(5, 6, ad.w, ad.h, 9)
+
+        fill("#FFF9F5")
+        rect(0, 0, ad.w, ad.h, 9)
+
+        fill("#2C3940")
+        rect(5, 5, ad.w - 10, ad.h - 40, 6)
+
+        fill("#5B817A")
+        ellipse(ad.w * 0.35, 44, 57, 57)
+
+        fill("#E1A27F")
+        ellipse(ad.w * 0.68, 38, 44, 44)
+
+        fill(255)
+        circle(ad.w / 2, 43, 34)
+
+        fill("#2C3940")
+
+        triangle(
+            ad.w / 2 - 4, 35,
+            ad.w / 2 - 4, 51,
+            ad.w / 2 + 10, 43
+        )
+
+        fill("#B7B7B7")
+        rect(12, ad.h - 44, ad.w - 24, 3)
+
+        fill("#F06363")
+
+        rect(
+            12,
+            ad.h - 44,
+            (ad.w - 24) * 0.4,
+            3
+        )
+
+        fill(C.brown)
         textAlign(LEFT)
         textStyle(BOLD)
         textSize(11)
-        text("Discover our new collection", ad.x + 10, ad.y + ad.h - 15)
 
-        fill(140)
-        textSize(9)
-        textStyle(NORMAL)
+        text(
+            "DON'T MISS THIS VIDEO!",
+            10,
+            ad.h - 15
+        )
+
+        fill(C.muted)
         textAlign(RIGHT)
-        text("Ad", ad.x + ad.w - 10, ad.y + ad.h - 15)
+        textSize(9)
+
+        text(
+            "Ad",
+            ad.w - 10,
+            ad.h - 15
+        )
 
     }
 
@@ -775,158 +1382,977 @@ function drawAd(ad) {
 
 }
 
+// ==========================
+// NEW: CREATE MUSHROOM POOF
+// ==========================
 
-// -------------------------
-// CAMERA + HAND LANDMARKS
-// -------------------------
+function createMushroomPoof(ad) {
+
+    let centerX =
+        ad.x + ad.w / 2
+
+    let centerY =
+        ad.y + ad.h / 2
+
+    // Create 35 particles
+
+    for (let i = 0; i < 35; i++) {
+
+        let angle = random(TWO_PI)
+
+        let speed = random(2, 7)
+
+        let particle = {
+
+            x: centerX,
+            y: centerY,
+
+            vx: cos(angle) * speed,
+            vy: sin(angle) * speed - 1.5,
+
+            size: random(5, 15),
+
+            color: random(poofColors),
+
+            life: 255,
+
+            rotation: random(TWO_PI),
+            rotationSpeed: random(-0.1, 0.1),
+
+            type: floor(random(3))
+
+        }
+
+        mushroomParticles.push(particle)
+
+    }
+
+    // A few larger flowers
+
+    for (let i = 0; i < 7; i++) {
+
+        let angle = random(TWO_PI)
+
+        mushroomParticles.push({
+
+            x: centerX,
+            y: centerY,
+
+            vx: cos(angle) * random(2, 5),
+            vy: sin(angle) * random(2, 5) - 2,
+
+            size: random(12, 20),
+
+            color: random([
+                C.pink,
+                C.gold,
+                C.sage
+            ]),
+
+            life: 255,
+
+            rotation: random(TWO_PI),
+            rotationSpeed: random(-0.06, 0.06),
+
+            type: 3
+
+        })
+
+    }
+
+}
+
+// ==========================
+// NEW: UPDATE PARTICLES
+// ==========================
+
+function updateMushroomParticles() {
+
+    for (
+        let i = mushroomParticles.length - 1;
+        i >= 0;
+        i--
+    ) {
+
+        let p = mushroomParticles[i]
+
+        p.x += p.vx
+        p.y += p.vy
+
+        // Gentle gravity
+
+        p.vy += 0.045
+
+        // Slow down gradually
+
+        p.vx *= 0.985
+        p.vy *= 0.985
+
+        p.rotation += p.rotationSpeed
+
+        p.life -= 5
+
+        if (p.life <= 0) {
+
+            mushroomParticles.splice(i, 1)
+            continue
+
+        }
+
+        drawMushroomParticle(p)
+
+    }
+
+}
+
+// ==========================
+// NEW: DRAW PARTICLES
+// ==========================
+
+function drawMushroomParticle(p) {
+
+    push()
+
+    translate(p.x, p.y)
+    rotate(p.rotation)
+
+    let alpha =
+        constrain(p.life / 255, 0, 1)
+
+    let col = color(p.color)
+    col.setAlpha(p.life)
+
+    noStroke()
+    fill(col)
+
+    // Type 0: Round spore
+
+    if (p.type === 0) {
+
+        circle(0, 0, p.size)
+
+    }
+
+    // Type 1: Tiny mushroom cap
+
+    if (p.type === 1) {
+
+        arc(
+            0,
+            0,
+            p.size,
+            p.size * 0.8,
+            PI,
+            TWO_PI,
+            CHORD
+        )
+
+        fill(255, 255, 255, p.life)
+
+        circle(
+            -p.size * 0.15,
+            -p.size * 0.12,
+            p.size * 0.18
+        )
+
+    }
+
+    // Type 2: Small star
+
+    if (p.type === 2) {
+
+        drawPoofStar(
+            0,
+            0,
+            p.size * 0.5,
+            p.size
+        )
+
+    }
+
+    // Type 3: Tiny flower
+
+    if (p.type === 3) {
+
+        for (let a = 0; a < 5; a++) {
+
+            push()
+
+            rotate(a * TWO_PI / 5)
+
+            ellipse(
+                0,
+                -p.size * 0.3,
+                p.size * 0.35,
+                p.size * 0.55
+            )
+
+            pop()
+
+        }
+
+        fill(229, 192, 123, p.life)
+
+        circle(
+            0,
+            0,
+            p.size * 0.3
+        )
+
+    }
+
+    pop()
+
+}
+
+// ==========================
+// NEW: DRAW STAR
+// ==========================
+
+function drawPoofStar(x, y, r1, r2) {
+
+    beginShape()
+
+    for (let i = 0; i < 10; i++) {
+
+        let angle =
+            -HALF_PI + i * PI / 5
+
+        let radius =
+            i % 2 === 0 ? r2 : r1
+
+        vertex(
+            x + cos(angle) * radius,
+            y + sin(angle) * radius
+        )
+
+    }
+
+    endShape(CLOSE)
+
+}
+
+// ==========================
+// GET HAND POINT
+// ==========================
+
+function getHandPoint(hand, name, index) {
+
+    if (hand[name]) {
+        return hand[name]
+    }
+
+    if (
+        hand.keypoints &&
+        hand.keypoints[index]
+    ) {
+
+        return hand.keypoints[index]
+
+    }
+
+    return null
+
+}
+
+// ==========================
+// RESET SHAKE TRACKING
+// ==========================
+
+function resetShakeTracking() {
+
+    shakePositions = []
+    shakeMotion = 0
+
+    previousHandCount = 0
+    shakeDirection = 0
+    shakeExtreme = null
+    shakeReversals = 0
+    shakeStartTime = 0
+
+}
+
+// ==========================
+// RESET ALL GESTURES
+// ==========================
+
+function resetGestureTracking() {
+
+    pinchReady = true
+    pinchStartTime = null
+
+    stretchStart = null
+
+    resetShakeTracking()
+
+    lastGestureTime = millis()
+
+}
+
+// ==========================
+// DETECT GESTURES
+// ==========================
+
+function detectGestures() {
+
+    if (
+        !cameraReady ||
+        hands.length === 0
+    ) {
+
+        gestureStatus = "SHOW YOUR HANDS"
+
+        pinchStartTime = null
+        stretchStart = null
+
+        resetShakeTracking()
+
+        return
+
+    }
+
+    if (
+        millis() - lastGestureTime <
+        gestureCooldown
+    ) {
+
+        gestureStatus = "COOLDOWN..."
+
+        pinchStartTime = null
+        stretchStart = null
+
+        resetShakeTracking()
+
+        return
+
+    }
+
+    let hand1 = hands[0]
+
+    let palm1 = getHandPoint(
+        hand1,
+        "middle_finger_mcp",
+        9
+    )
+
+    let wrist1 = getHandPoint(
+        hand1,
+        "wrist",
+        0
+    )
+
+    if (!palm1 || !wrist1) {
+        return
+    }
+
+    let handCenterX = palm1.x
+
+    let handSize1 = dist(
+        wrist1.x,
+        wrist1.y,
+        palm1.x,
+        palm1.y
+    )
+
+    // ==========================
+    // TWO HANDS: STRETCH
+    // ==========================
+
+    if (hands.length >= 2) {
+
+        pinchStartTime = null
+
+        let hand2 = hands[1]
+
+        let palm2 = getHandPoint(
+            hand2,
+            "middle_finger_mcp",
+            9
+        )
+
+        let wrist2 = getHandPoint(
+            hand2,
+            "wrist",
+            0
+        )
+
+        if (!palm2 || !wrist2) {
+            return
+        }
+
+        handCenterX =
+            (palm1.x + palm2.x) / 2
+
+        let handSize2 = dist(
+            wrist2.x,
+            wrist2.y,
+            palm2.x,
+            palm2.y
+        )
+
+        let averageHandSize =
+            (handSize1 + handSize2) / 2
+
+        let distanceBetweenHands = dist(
+            palm1.x,
+            palm1.y,
+            palm2.x,
+            palm2.y
+        )
+
+        let normalizedDistance =
+            distanceBetweenHands /
+            max(averageHandSize, 1)
+
+        if (
+            stretchStart === null ||
+            normalizedDistance < stretchStart
+        ) {
+
+            stretchStart = normalizedDistance
+
+        }
+
+        debugStretch =
+            normalizedDistance - stretchStart
+
+        if (debugStretch > stretchDistance) {
+
+            if (removeAd(1)) {
+
+                gestureStatus = "STRETCH DETECTED!"
+                lastGestureTime = millis()
+
+                stretchStart = null
+
+                resetShakeTracking()
+
+                return
+
+            }
+
+        }
+
+        gestureStatus = "TWO HANDS - TRACKING"
+
+    } else {
+
+        // ==========================
+        // ONE HAND: SQUEEZE
+        // ==========================
+
+        stretchStart = null
+        debugStretch = 0
+
+        let thumb = getHandPoint(
+            hand1,
+            "thumb_tip",
+            4
+        )
+
+        let index = getHandPoint(
+            hand1,
+            "index_finger_tip",
+            8
+        )
+
+        if (
+            thumb &&
+            index &&
+            handSize1 > 10
+        ) {
+
+            let pinchDistance = dist(
+                thumb.x,
+                thumb.y,
+                index.x,
+                index.y
+            ) / handSize1
+
+            debugPinch = pinchDistance
+
+            if (pinchDistance > pinchOpen) {
+
+                pinchReady = true
+                pinchStartTime = null
+
+            }
+
+            if (
+                pinchReady &&
+                pinchDistance < pinchClose
+            ) {
+
+                if (pinchStartTime === null) {
+                    pinchStartTime = millis()
+                }
+
+                let holdingTime =
+                    millis() - pinchStartTime
+
+                gestureStatus =
+                    "SQUEEZING " +
+                    min(
+                        100,
+                        floor(
+                            holdingTime /
+                            pinchHoldTime * 100
+                        )
+                    ) +
+                    "%"
+
+                if (
+                    holdingTime >= pinchHoldTime
+                ) {
+
+                    if (removeAd(0)) {
+
+                        gestureStatus =
+                            "SQUEEZE DETECTED!"
+
+                        lastGestureTime = millis()
+
+                        pinchReady = false
+                        pinchStartTime = null
+
+                        resetShakeTracking()
+
+                        return
+
+                    }
+
+                }
+
+            } else {
+
+                pinchStartTime = null
+                gestureStatus = "ONE HAND - TRACKING"
+
+            }
+
+        } else {
+
+            pinchStartTime = null
+            gestureStatus = "ONE HAND - TRACKING"
+
+        }
+
+    }
+
+    // ==========================
+    // SHAKE
+    // ==========================
+
+    detectShake(
+        handCenterX,
+        hands.length,
+        handSize1
+    )
+
+}
+
+// ==========================
+// ORIGINAL SHAKE DETECTION
+// ==========================
+
+function detectShake(x, handCount, handSize) {
+
+    let now = millis()
+
+    if (
+        previousHandCount !== 0 &&
+        previousHandCount !== handCount
+    ) {
+
+        resetShakeTracking()
+
+    }
+
+    previousHandCount = handCount
+
+    let normalizedX =
+        x / max(handSize, 1)
+
+    shakePositions.push({
+        x: normalizedX,
+        time: now
+    })
+
+    shakePositions = shakePositions.filter(
+        function(point) {
+            return now - point.time <= shakeWindow
+        }
+    )
+
+    if (shakePositions.length < 3) {
+        return
+    }
+
+    if (
+        shakeStartTime > 0 &&
+        now - shakeStartTime > shakeWindow
+    ) {
+
+        resetShakeTracking()
+
+        previousHandCount = handCount
+
+        shakePositions.push({
+            x: normalizedX,
+            time: now
+        })
+
+        return
+
+    }
+
+    let latest =
+        shakePositions[shakePositions.length - 1]
+
+    let previous =
+        shakePositions[shakePositions.length - 2]
+
+    let movement =
+        latest.x - previous.x
+
+    shakeMotion = abs(movement)
+
+    let direction = 0
+
+    if (movement > shakeNoiseThreshold) {
+        direction = 1
+    }
+
+    if (movement < -shakeNoiseThreshold) {
+        direction = -1
+    }
+
+    if (direction === 0) {
+        return
+    }
+
+    if (shakeDirection === 0) {
+
+        shakeDirection = direction
+        shakeExtreme = latest.x
+        shakeStartTime = now
+
+        return
+
+    }
+
+    if (direction === shakeDirection) {
+
+        if (direction === 1) {
+
+            shakeExtreme = max(
+                shakeExtreme,
+                latest.x
+            )
+
+        } else {
+
+            shakeExtreme = min(
+                shakeExtreme,
+                latest.x
+            )
+
+        }
+
+        return
+
+    }
+
+    let reverseDistance =
+        abs(latest.x - shakeExtreme)
+
+    if (
+        reverseDistance >=
+        shakeMinDistance
+    ) {
+
+        shakeReversals++
+
+        shakeDirection = direction
+        shakeExtreme = latest.x
+
+    }
+
+    if (
+        shakeReversals >=
+        shakeRequiredReversals
+    ) {
+
+        if (removeAd(2)) {
+
+            gestureStatus = "SHAKE DETECTED!"
+            lastGestureTime = millis()
+
+            resetShakeTracking()
+
+        }
+
+    }
+
+}
+
+// ==========================
+// CAMERA PREVIEW
+// ==========================
 
 function drawCamera() {
 
     noStroke()
 
-    fill(40, 45, 75)
-    rect(30, 590, 250, 90, 12)
+    fill(C.paper)
+    rect(30, 589, 250, 132, 15)
 
-    // Mirrored camera preview
-    push()
+    fill(C.paleGreen)
+    rect(39, 598, 162, 122, 9)
 
-    translate(190, 598)
-    scale(-1, 1)
+    let previewX = 40
+    let previewY = 599
+    let previewW = 160
+    let previewH = 120
 
-    image(video, 0, 0, 150, 75)
+    if (
+        video &&
+        video.elt.readyState >= 2
+    ) {
 
-    pop()
+        let sourceW =
+            video.elt.videoWidth
 
-    // Draw tracked hand points
-    for (let hand of hands) {
+        let sourceH =
+            video.elt.videoHeight
 
-        for (let point of hand.keypoints) {
+        push()
 
-            let x = map(point.x, 0, 320, 150, 0) + 40
-            let y = map(point.y, 0, 240, 0, 75) + 598
+        translate(
+            previewX + previewW,
+            previewY
+        )
 
-            fill(120, 255, 160)
-            noStroke()
-            circle(x, y, 4)
+        scale(-1, 1)
+
+        image(
+            video,
+            0,
+            0,
+            previewW,
+            previewH
+        )
+
+        pop()
+
+        for (let hand of hands) {
+
+            if (!hand.keypoints) {
+                continue
+            }
+
+            for (let point of hand.keypoints) {
+
+                let x =
+                    previewX +
+                    previewW -
+                    (point.x / sourceW) *
+                    previewW
+
+                let y =
+                    previewY +
+                    (point.y / sourceH) *
+                    previewH
+
+                fill("#B8FF9A")
+                noStroke()
+
+                circle(x, y, 5)
+
+            }
 
         }
 
     }
 
-    fill(255)
+    fill(C.brown)
     textAlign(LEFT)
-    textSize(11)
-    text("LIVE CAMERA", 195, 618)
-
-    fill(160, 170, 200)
+    textStyle(BOLD)
     textSize(10)
-    text(hands.length + " HAND(S)", 195, 640)
+
+    text(
+        "LIVE FOREST CAM",
+        207,
+        615
+    )
+
+    fill(C.green)
+    textStyle(NORMAL)
+    textSize(10)
+
+    text(
+        hands.length + " HAND(S)",
+        207,
+        635
+    )
+
+    drawTinyFlower(
+        242,
+        682,
+        0.7,
+        C.pink
+    )
 
 }
 
-
-// -------------------------
-// GESTURE DEBUG PANEL
-// -------------------------
+// ==========================
+// FOREST STATUS PANEL
+// ==========================
 
 function drawGestureStatus() {
 
     noStroke()
 
-    fill(40, 45, 75)
-    rect(295, 590, 575, 90, 12)
+    fill(C.paper)
+    rect(294, 589, 575, 132, 15)
 
-    fill(255)
-    textSize(14)
-    textStyle(BOLD)
+    fill(C.brown)
     textAlign(LEFT)
-    text("GESTURE DEBUG", 315, 615)
+    textStyle(BOLD)
+    textSize(14)
 
-    fill(160, 250, 190)
-    textSize(15)
-    text(gestureStatus, 315, 645)
+    text(
+        "✿ FOREST RESCUE STATUS",
+        312,
+        615
+    )
 
-    fill(180)
-    textSize(11)
-    text("1 SQUEEZE   |   2 STRETCH   |   3 SHAKE   |   R RESET", 315, 665)
+    fill(C.green)
+    textSize(13)
 
+    text(
+        gestureStatus,
+        312,
+        639
+    )
+
+    fill(C.muted)
     textStyle(NORMAL)
+    textSize(11)
+
+    text(
+        "SHAKE: " +
+        shakeReversals +
+        " / " +
+        shakeRequiredReversals,
+        312,
+        660
+    )
+
+    text(
+        "PINCH: " +
+        debugPinch.toFixed(2) +
+        "     STRETCH: " +
+        debugStretch.toFixed(2),
+        312,
+        679
+    )
+
+    textSize(10)
+
+    text(
+        cameraStatus.slice(0, 72),
+        312,
+        699
+    )
+
+    drawMushroom(
+        827,
+        680,
+        0.48
+    )
 
 }
 
-
-// -------------------------
+// ==========================
 // REMOVE AD
-// -------------------------
+// ==========================
 
 function removeAd(type) {
 
-    for (let i = ads.length - 1; i >= 0; i--) {
+    for (
+        let i = ads.length - 1;
+        i >= 0;
+        i--
+    ) {
 
-        if (ads[i].type === type && !ads[i].removing) {
+        if (
+            ads[i].type === type &&
+            !ads[i].removing
+        ) {
 
             ads[i].removing = true
             ads[i].progress = 0
 
-            break
+            return true
 
         }
 
     }
 
+    return false
+
 }
 
-
-// -------------------------
-// KEYBOARD BACKUP
-// -------------------------
+// ==========================
+// KEYBOARD SHORTCUTS
+// ==========================
 
 function keyPressed() {
 
-    if (key === '1') {
+    if (key === "1") {
         removeAd(0)
     }
 
-    if (key === '2') {
+    if (key === "2") {
         removeAd(1)
     }
 
-    if (key === '3') {
+    if (key === "3") {
         removeAd(2)
     }
 
-    if (key === 'r' || key === 'R') {
+    if (
+        key === "r" ||
+        key === "R"
+    ) {
+
         restartGame()
+
     }
 
 }
 
-
-// -------------------------
-// RESTART
-// -------------------------
+// ==========================
+// RESTART GAME
+// ==========================
 
 function restartGame() {
 
     ads = []
     adsDestroyed = 0
 
+    mushroomParticles = []
+
     addAd(0)
     addAd(1)
     addAd(2)
 
-    pinchReady = true
-    stretchStart = null
+    resetGestureTracking()
 
-    previousHandX = null
-    lastDirection = 0
-    shakeCount = 0
-    lastShakeTime = 0
+    gestureStatus = "FOREST RESET!"
 
-    lastGestureTime = millis()
-
-    gestureStatus = "GAME RESTARTED"
-
-    nextAdTime = millis() + adInterval
+    nextAdTime =
+        millis() + adInterval
 
 }

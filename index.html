@@ -3,36 +3,126 @@
 <html lang="en">
 
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <title>Ad Attack</title>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Fox & Bunny Forest Club</title>
 
     <link rel="stylesheet" href="style.css">
 
+    <!-- p5.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.11/p5.min.js"></script>
+
+    <!-- ml5.js -->
     <script src="https://unpkg.com/ml5@1.2.1/dist/ml5.min.js"></script>
-    <script src="sketch.js"></script>
+
 </head>
 
 <body>
 
-    <div class="header">
-        <h1>AD ATTACK ✳</h1>
-        <p>THE INTERNET IS UNDER ATTACK</p>
+    <!-- WEBSITE HEADER -->
+
+    <header class="page-heading">
+
+        <p class="eyebrow">
+            ✿ A LITTLE WOODLAND ADVENTURE ✿
+        </p>
+
+        <h1>
+            Fox & Bunny Forest Club
+        </h1>
+
+        <p class="intro">
+            A cozy little corner of the internet,
+            where foxes, bunnies, and mushrooms live
+            happily together.
+        </p>
+
+        <p class="subtitle">
+            HELP US KEEP THE FOREST PEACEFUL!
+        </p>
+
+    </header>
+
+
+    <!-- CAMERA CONTROLS -->
+
+    <div class="camera-controls">
+
+        <label for="camera-select">
+            YOUR CAMERA
+        </label>
+
+        <select id="camera-select">
+
+            <option value="">
+                Loading cameras...
+            </option>
+
+        </select>
+
+        <button id="refresh-camera">
+            Refresh Camera
+        </button>
+
     </div>
 
-    <div id="canvas-container"></div>
 
-    <p class="instruction">
-        SQUEEZE = POP-UP &nbsp; | &nbsp;
-        STRETCH = BANNER &nbsp; | &nbsp;
-        SHAKE = VIDEO
-    </p>
+    <!-- INTERACTIVE GAME -->
 
-    <p class="instruction">
-        KEYBOARD BACKUP: 1 / 2 / 3 &nbsp; | &nbsp; R = RESTART
-    </p>
+    <main>
+
+        <div id="canvas-container"></div>
+
+    </main>
+
+
+    <!-- GESTURE INSTRUCTIONS -->
+
+    <section class="instruction">
+
+        <p>
+            🐰 <strong>BUNNY SQUEEZE</strong>
+            — Pinch your fingers to remove pop-up ads.
+        </p>
+
+        <p>
+            🦊 <strong>FOX TAIL STRETCH</strong>
+            — Stretch both hands apart to remove banners.
+        </p>
+
+        <p>
+            🍄 <strong>MUSHROOM SHAKE</strong>
+            — Shake your hand to remove video ads.
+        </p>
+
+    </section>
+
+
+    <!-- KEYBOARD BACKUP -->
+
+    <footer>
+
+        <p class="keys">
+            KEYBOARD SHORTCUTS:
+            1 = SQUEEZE |
+            2 = STRETCH |
+            3 = SHAKE |
+            R = RESTART
+        </p>
+
+
+    </footer>
+
+
+    <!-- GAME CODE -->
+
+    <script src="sketch.js"></script>
 
 </body>
 
