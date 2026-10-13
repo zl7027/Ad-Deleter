@@ -42,8 +42,8 @@ let gestureCooldown = 1000
 // ==========================
 
 // SQUEEZE
-let pinchClose = 0.6
-let pinchOpen = 0.8
+let pinchClose = 0.3
+let pinchOpen = 0.9
 let pinchHoldTime = 200
 
 let pinchReady = true
@@ -57,7 +57,7 @@ let stretchStart = null
 
 let shakeWindow = 1800
 let shakeMinDistance = 0.22
-let shakeRequiredReversals = 3
+let shakeRequiredReversals = 8
 let shakeNoiseThreshold = 0.025
 
 // Allow brief hand tracking loss
